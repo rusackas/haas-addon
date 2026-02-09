@@ -19,6 +19,7 @@ class HAIngressMiddleware:
         # Get the ingress path from HA's header
         ingress_path = environ.get("HTTP_X_INGRESS_PATH", "")
         path_info = environ.get("PATH_INFO", "/")
+        script_name = ""
 
         # Log for debugging (skip health checks to reduce noise)
         if path_info != "/health":
@@ -31,17 +32,28 @@ class HAIngressMiddleware:
             if path_info != "/health":
                 print(f"[HA-Ingress] Set SCRIPT_NAME={script_name}", file=sys.stderr)
 
-        # Wrap start_response to log the status
-        def logging_start_response(status, headers, exc_info=None):
-            if path_info != "/health":
-                print(f"[HA-Ingress] Response: {status}", file=sys.stderr)
-                # Log Location header for redirects
+        # Wrap start_response to fix redirect URLs
+        def patched_start_response(status, headers, exc_info=None):
+            # If this is a redirect and we have an ingress path, fix the Location header
+            if ingress_path and status.startswith(("301", "302", "303", "307", "308")):
+                new_headers = []
                 for name, value in headers:
                     if name.lower() == "location":
-                        print(f"[HA-Ingress] Redirect to: {value}", file=sys.stderr)
+                        # If Location is absolute path without ingress prefix, add it
+                        if value.startswith("/") and not value.startswith(script_name):
+                            value = script_name + value
+                            if path_info != "/health":
+                                print(f"[HA-Ingress] Fixed redirect to: {value}", file=sys.stderr)
+                        elif path_info != "/health":
+                            print(f"[HA-Ingress] Redirect to: {value}", file=sys.stderr)
+                    new_headers.append((name, value))
+                headers = new_headers
+            elif path_info != "/health":
+                print(f"[HA-Ingress] Response: {status}", file=sys.stderr)
+
             return start_response(status, headers, exc_info)
 
-        return self.app(environ, logging_start_response)
+        return self.app(environ, patched_start_response)
 
 
 # Create the wrapped application

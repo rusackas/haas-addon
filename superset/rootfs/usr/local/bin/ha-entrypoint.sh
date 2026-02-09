@@ -55,13 +55,25 @@ if [ -z "${SUPERSET_SECRET_KEY}" ]; then
     fi
 fi
 
-# Generate admin password if not set
+# Generate or retrieve admin password
+ADMIN_PASSWORD_FILE="${SHARE_DIR}/.admin_password"
 if [ -z "${ADMIN_PASSWORD}" ]; then
-    ADMIN_PASSWORD=$(openssl rand -base64 12)
-    echo "================================================"
-    echo "Generated admin password: ${ADMIN_PASSWORD}"
-    echo "Please save this password!"
-    echo "================================================"
+    if [ -f "${ADMIN_PASSWORD_FILE}" ]; then
+        ADMIN_PASSWORD=$(cat "${ADMIN_PASSWORD_FILE}")
+        echo "Using existing admin password"
+    else
+        ADMIN_PASSWORD=$(openssl rand -base64 12)
+        echo "${ADMIN_PASSWORD}" > "${ADMIN_PASSWORD_FILE}"
+        chmod 600 "${ADMIN_PASSWORD_FILE}"
+        echo "================================================"
+        echo "Generated admin password: ${ADMIN_PASSWORD}"
+        echo "Please save this password!"
+        echo "================================================"
+    fi
+else
+    # User provided password - save it
+    echo "${ADMIN_PASSWORD}" > "${ADMIN_PASSWORD_FILE}"
+    chmod 600 "${ADMIN_PASSWORD_FILE}"
 fi
 
 # Build Home Assistant Recorder database URI
