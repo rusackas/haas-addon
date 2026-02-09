@@ -5,8 +5,10 @@ This module wraps the Superset Flask app with middleware that handles
 the X-Ingress-Path header set by Home Assistant's ingress proxy.
 """
 
+import gzip
 import re
 import sys
+import zlib
 from superset.app import create_app
 
 
@@ -21,6 +23,26 @@ class HAIngressMiddleware:
         if url.startswith("/") and not url.startswith(script_name) and not url.startswith("//"):
             return script_name + url
         return url
+
+    def _decompress(self, data, encoding):
+        """Decompress data based on Content-Encoding."""
+        if encoding == "gzip":
+            return gzip.decompress(data)
+        elif encoding == "deflate":
+            try:
+                return zlib.decompress(data)
+            except zlib.error:
+                # Try raw deflate
+                return zlib.decompress(data, -zlib.MAX_WBITS)
+        return data
+
+    def _compress(self, data, encoding):
+        """Compress data based on Content-Encoding."""
+        if encoding == "gzip":
+            return gzip.compress(data)
+        elif encoding == "deflate":
+            return zlib.compress(data)
+        return data
 
     def _rewrite_html(self, text, script_name):
         """Rewrite all absolute URLs in HTML content."""
@@ -128,6 +150,7 @@ class HAIngressMiddleware:
         script_name = ""
         is_html = False
         is_javascript = False
+        content_encoding = None
         response_headers = []
 
         # Log for debugging (skip health checks to reduce noise)
@@ -145,7 +168,7 @@ class HAIngressMiddleware:
         captured_status = "200 OK"
 
         def capturing_start_response(status, headers, exc_info=None):
-            nonlocal is_html, is_javascript, response_headers, captured_status
+            nonlocal is_html, is_javascript, content_encoding, response_headers, captured_status
             captured_status = status
 
             new_headers = []
@@ -157,6 +180,10 @@ class HAIngressMiddleware:
                     elif "javascript" in value.lower():
                         is_javascript = True
 
+                # Check content encoding (compression)
+                if name.lower() == "content-encoding":
+                    content_encoding = value.lower()
+
                 # Fix redirect URLs
                 if ingress_path and name.lower() == "location":
                     if value.startswith("/") and not value.startswith(script_name):
@@ -164,7 +191,7 @@ class HAIngressMiddleware:
                         if path_info != "/health":
                             print(f"[HA-Ingress] Fixed redirect to: {value}", file=sys.stderr)
 
-                # Skip Content-Length for rewritable content
+                # Skip Content-Length for rewritable content (we'll recalculate)
                 if (is_html or is_javascript) and ingress_path and name.lower() == "content-length":
                     continue
 
@@ -173,7 +200,7 @@ class HAIngressMiddleware:
             response_headers = new_headers
 
             if path_info != "/health":
-                print(f"[HA-Ingress] Response: {status}, HTML={is_html}, JS={is_javascript}", file=sys.stderr)
+                print(f"[HA-Ingress] Response: {status}, HTML={is_html}, JS={is_javascript}, Encoding={content_encoding}", file=sys.stderr)
 
             # If rewritable content and ingress, defer start_response
             if (is_html or is_javascript) and ingress_path:
@@ -196,6 +223,12 @@ class HAIngressMiddleware:
             body = b"".join(body_parts)
 
             try:
+                # Decompress if needed
+                if content_encoding in ("gzip", "deflate"):
+                    body = self._decompress(body, content_encoding)
+                    if path_info != "/health":
+                        print(f"[HA-Ingress] Decompressed {content_encoding} ({len(body)} bytes)", file=sys.stderr)
+
                 text = body.decode("utf-8")
 
                 if is_html:
@@ -222,11 +255,19 @@ class HAIngressMiddleware:
 
                 body = text.encode("utf-8")
 
+                # Recompress if needed
+                if content_encoding in ("gzip", "deflate"):
+                    body = self._compress(body, content_encoding)
+                    if path_info != "/health":
+                        print(f"[HA-Ingress] Recompressed {content_encoding} ({len(body)} bytes)", file=sys.stderr)
+
                 if path_info != "/health":
                     content_type = "HTML" if is_html else "JS"
-                    print(f"[HA-Ingress] Rewrote {content_type} body ({len(body)} bytes)", file=sys.stderr)
+                    print(f"[HA-Ingress] Rewrote {content_type} body", file=sys.stderr)
             except Exception as e:
                 print(f"[HA-Ingress] Error rewriting content: {e}", file=sys.stderr)
+                import traceback
+                traceback.print_exc(file=sys.stderr)
 
             # Add Content-Length header
             response_headers.append(("Content-Length", str(len(body))))

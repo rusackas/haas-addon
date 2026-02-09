@@ -1,5 +1,5 @@
 name: "Apache Superset"
-version: "1.0.12"
+version: "1.0.13"
 slug: superset
 description: "Powerful data visualization and dashboarding for your Home Assistant data"
 url: "https://github.com/rusackas/addon-apache-superset"
