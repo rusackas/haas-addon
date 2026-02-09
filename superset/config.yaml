@@ -1,5 +1,5 @@
 name: "Apache Superset"
-version: "1.0.6"
+version: "1.0.7"
 slug: superset
 description: "Powerful data visualization and dashboarding for your Home Assistant data"
 url: "https://github.com/rusackas/addon-apache-superset"
@@ -17,9 +17,10 @@ map:
   - share:rw
   - ssl:ro
 ports:
-  8088/tcp: null
+  8088/tcp: 8088
 ports_description:
-  8088/tcp: "Superset web interface (use ingress instead)"
+  8088/tcp: "Superset web interface (for testing without ingress)"
+host_network: false
 options:
   database_type: sqlite
   database_host: ""

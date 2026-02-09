@@ -5,6 +5,7 @@ This module wraps the Superset Flask app with middleware that handles
 the X-Ingress-Path header set by Home Assistant's ingress proxy.
 """
 
+import sys
 from superset.app import create_app
 
 
@@ -17,16 +18,16 @@ class HAIngressMiddleware:
     def __call__(self, environ, start_response):
         # Get the ingress path from HA's header
         ingress_path = environ.get("HTTP_X_INGRESS_PATH", "")
+        path_info = environ.get("PATH_INFO", "/")
+
+        # Log for debugging
+        print(f"[HA-Ingress] Request: PATH_INFO={path_info}, X-Ingress-Path={ingress_path}", file=sys.stderr)
 
         if ingress_path:
             # Set SCRIPT_NAME so Flask generates correct URLs
             script_name = ingress_path.rstrip("/")
             environ["SCRIPT_NAME"] = script_name
-
-            # Adjust PATH_INFO if it includes the ingress path
-            path_info = environ.get("PATH_INFO", "")
-            if path_info.startswith(script_name):
-                environ["PATH_INFO"] = path_info[len(script_name):] or "/"
+            print(f"[HA-Ingress] Set SCRIPT_NAME={script_name}", file=sys.stderr)
 
         return self.app(environ, start_response)
 
