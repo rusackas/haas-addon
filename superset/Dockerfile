@@ -32,16 +32,12 @@ ENV FLASK_APP=superset
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
     CMD curl -f http://localhost:8088/health || exit 1
 
-# Default user
-USER superset
-
 # Expose Superset port
 EXPOSE 8088
 
 # Use custom entrypoint that handles HA add-on lifecycle
+# Run as root - HA add-ons are sandboxed and need root for volume setup
 COPY rootfs/usr/local/bin/ha-entrypoint.sh /usr/local/bin/ha-entrypoint.sh
-USER root
 RUN chmod +x /usr/local/bin/ha-entrypoint.sh
-USER superset
 
 ENTRYPOINT ["/usr/local/bin/ha-entrypoint.sh"]
