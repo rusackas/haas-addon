@@ -69,6 +69,57 @@ class HAIngressMiddleware:
                 count=1
             )
 
+        # Inject JavaScript to patch fetch() and XMLHttpRequest
+        # This is needed because fetch() doesn't respect <base> tags
+        fetch_patch = f'''<script>
+(function() {{
+  var INGRESS_PATH = "{script_name}";
+
+  // Patch fetch to prepend ingress path to absolute URLs
+  var originalFetch = window.fetch;
+  window.fetch = function(url, options) {{
+    if (typeof url === 'string' && url.startsWith('/') && !url.startsWith(INGRESS_PATH) && !url.startsWith('//')) {{
+      url = INGRESS_PATH + url;
+    }}
+    return originalFetch.call(this, url, options);
+  }};
+
+  // Patch XMLHttpRequest.open for older AJAX calls
+  var originalXHROpen = XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open = function(method, url) {{
+    if (typeof url === 'string' && url.startsWith('/') && !url.startsWith(INGRESS_PATH) && !url.startsWith('//')) {{
+      arguments[1] = INGRESS_PATH + url;
+    }}
+    return originalXHROpen.apply(this, arguments);
+  }};
+
+  // Also patch Image src for dynamically created images
+  var originalImage = window.Image;
+  window.Image = function(width, height) {{
+    var img = new originalImage(width, height);
+    var originalSrcDescriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+    Object.defineProperty(img, 'src', {{
+      set: function(url) {{
+        if (typeof url === 'string' && url.startsWith('/') && !url.startsWith(INGRESS_PATH) && !url.startsWith('//')) {{
+          url = INGRESS_PATH + url;
+        }}
+        originalSrcDescriptor.set.call(this, url);
+      }},
+      get: function() {{
+        return originalSrcDescriptor.get.call(this);
+      }}
+    }});
+    return img;
+  }};
+
+  console.log('[HA-Ingress] URL patching enabled for path:', INGRESS_PATH);
+}})();
+</script>'''
+
+        # Insert the patch script right after <head> (after base tag)
+        if base_tag in text:
+            text = text.replace(base_tag, base_tag + fetch_patch, 1)
+
         # Rewrite href, src, action with double quotes
         text = re.sub(
             r'(href|src|action|data-src|poster)="(/[^"]*)"',

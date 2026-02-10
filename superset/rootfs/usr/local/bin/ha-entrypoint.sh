@@ -102,8 +102,51 @@ export HA_DATABASE_URI="${HA_DATABASE_URI}"
 export HA_DATABASE_NAME="${DATABASE_NAME}"
 
 # Generate dynamic Superset configuration
-cat > /etc/superset/superset_config.py << EOF
+cat > /etc/superset/superset_config.py << 'PYEOF'
 import os
+from flask import request
+from flask_login import login_user
+from superset.security import SupersetSecurityManager
+
+
+class HAIngressSecurityManager(SupersetSecurityManager):
+    """Custom security manager that auto-logs in via HA ingress."""
+
+    def __init__(self, appbuilder):
+        super().__init__(appbuilder)
+        self._ha_user = None
+
+    def get_ha_user(self):
+        """Get or cache the admin user for HA ingress auth."""
+        if self._ha_user is None:
+            self._ha_user = self.find_user(username="admin")
+        return self._ha_user
+
+
+# Flask before_request hook to auto-login via ingress
+def ha_ingress_auto_login():
+    """Auto-login admin user when accessed via HA ingress."""
+    from flask import current_app
+    from flask_login import current_user
+
+    # Skip if already authenticated
+    if current_user.is_authenticated:
+        return
+
+    # Check for HA ingress header
+    ingress_path = request.headers.get("X-Ingress-Path", "")
+    if ingress_path:
+        sm = current_app.appbuilder.sm
+        user = sm.get_ha_user()
+        if user:
+            login_user(user, remember=False)
+
+
+# Register the before_request hook
+FLASK_APP_MUTATOR = lambda app: app.before_request(ha_ingress_auto_login)
+
+# Use custom security manager
+CUSTOM_SECURITY_MANAGER = HAIngressSecurityManager
 
 # Security
 SECRET_KEY = os.environ.get("SUPERSET_SECRET_KEY", "CHANGE_ME")
@@ -169,7 +212,7 @@ CORS_OPTIONS = {
 
 # Logging
 LOG_LEVEL = "INFO"
-EOF
+PYEOF
 
 echo "Superset configuration generated"
 
